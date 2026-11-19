@@ -211,7 +211,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   <h2>頂軌端面剖視</h2>
   <svg id="sec" viewBox="0 0 300 290" role="img" aria-label="頂軌剖面：單軌，各片布面以不同偏心量吊在同一組導輪位置下方"></svg>
   <ul id="secLegend"></ul>
-  <p>動態片只有前導輪；後端以側向滑條搭在相鄰片導輪旁的承托座。偏心量單位 mm，片距 5 mm 為示意假設值。</p>
+  <p>動態片只有前導輪，各片導輪沿軌道前後錯開 2.5 cm，收合時才能完全交疊。後端以側向滑條搭在相鄰片前端的承托座。偏心量單位 mm；片距 5 mm、錯位 2.5 cm 為示意假設值。</p>
 </aside>
 
 <section id="dock" class="panel" aria-label="時間軸">
@@ -273,8 +273,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   const TRACK_Y = 2.52;        // 頂軌高
   const ZC = -0.44;            // 單軌中心線
   const PITCH = 0.005;         // 相鄰片布面的前後間距（示意假設值）
-  const STEP_CLOSED = 0.10;    // 收合時相鄰錯位
-  const WHEEL_BACK = 0.05;     // 前導輪距片簾前緣
+  const STEP_CLOSED = 0;       // 收合時所有片完全交疊（同一個位置）
+  const WHEEL_BACK = 0.05;     // 領頭片的前導輪距片簾前緣
+  const WHEEL_STEP = 0.025;    // 相鄰片導輪沿軌道方向的錯位（示意假設值）
+  const SHOE_BACK = 0.03;      // 承托座距片簾前緣
+  // 完全交疊時所有片在同一個位置，同一條軌道裡的導輪不能重疊，
+  // 所以每片導輪裝在離前緣不同距離的地方：越靠固定端的片，導輪越往後退。
+  const wheelAt = i => W - WHEEL_BACK - (N - 1 - i) * WHEEL_STEP;
   const WAND_L = 1.25, GRIP_AT = WAND_L - 0.07;
   // 佈軌：所有片共用一條軌道。每個動態片只有一組前導輪，導輪都在軌道中心，
   // 布面則各自偏離軌道中心不同的量（偏心），所以多片可以前後緊貼。
@@ -293,7 +298,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   setSpec(6, 0.60);
 
   const PHASES = [
-    { from: 0.00, to: 0.15, name: '拉拖準備', color: 'var(--p1)', desc: '操作員走到領頭片旁，抬手握住拉棒握把；片簾維持收合。' },
+    { from: 0.00, to: 0.15, name: '拉拖準備', color: 'var(--p1)', desc: '操作員走到領頭片旁，抬手握住拉棒握把；所有片簾完全交疊，收納在一片的寬度內。' },
     { from: 0.15, to: 0.75, name: '拉抻展開', color: 'var(--p2)', desc: '人拉著拉棒向右走，各片依位移比等比例同步滑出，每一處交疊寬度始終相等。' },
     { from: 0.75, to: 0.90, name: '到位定位', color: 'var(--p3)', desc: '領頭片靠上右側擋塊並微調到位，交疊停在 8.0 cm 的安全下限。' },
     { from: 0.90, to: 1.00, name: '鬆手檢視', color: 'var(--p4)', desc: '放開拉棒，退後一步檢視整幅片簾。' }
@@ -510,13 +515,13 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
       part(W, 0.03, 0.003, W / 2, PANEL_TOP - H + 0.015, 0, aluMat);      // 下擺配重
 
       const toTrack = -FAB_E(i);            // 這一片的局部座標裡，軌道中心的 z
-      const front = W - WHEEL_BACK;
+      const front = wheelAt(i);
       const hang = x => {                    // 吊桿穿過軌縫，再用偏心折臂橫向接到上樑
         part(0.012, WHEEL_Y - ARM_Y, 0.002, x, (WHEEL_Y + ARM_Y) / 2, toTrack, cMat);
-        part(0.03, 0.002, Math.abs(toTrack) + 0.002, x, ARM_Y, toTrack / 2, cMat);
+        part(0.016, 0.002, Math.abs(toTrack) + 0.002, x, ARM_Y, toTrack / 2, cMat);
       };
       if (i === 0) {                         // 固定片：前後兩個固定座鎖在軌內，沒有導輪
-        [0.08, front].forEach(x => { hang(x); part(0.03, 0.012, 0.012, x, WHEEL_Y, toTrack, cMat); });
+        [0.08, front].forEach(x => { hang(x); part(0.016, 0.012, 0.012, x, WHEEL_Y, toTrack, cMat); });
       } else {                               // 動態片：只有前導輪
         hang(front);
         [-0.007, 0.007].forEach(dz => {
@@ -524,10 +529,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
           wheel.rotation.x = Math.PI / 2; wheel.position.set(front, WHEEL_Y, toTrack + dz); g.add(wheel);
         });
         part(0.004, 0.003, 0.014, front, WHEEL_Y, toTrack, cMat);         // 輪軸
-        // 側向滑條：沿上樑全長朝相鄰片伸出，搭在那一片導輪旁的承托座上，撐住本片後端
+        // 側向滑條：沿上樑全長朝相鄰片伸出，搭在那一片前端（導輪旁）的承托座上，撐住本片後端
         part(W, 0.0015, PITCH * 0.6, W / 2, PANEL_TOP + 0.026, -PITCH * 0.3, cMat);
       }
-      if (i < N - 1) part(0.03, 0.002, PITCH * 0.55, front, PANEL_TOP + 0.024, PITCH * 0.475, cMat);   // 承托座
+      if (i < N - 1) part(0.03, 0.002, PITCH * 0.55, W - SHOE_BACK, PANEL_TOP + 0.024, PITCH * 0.475, cMat);   // 承托座
       blinds.add(g); panels.push(g);
     }
     // 交疊區：兩層布重疊處略深；透視模式下改為綠色
@@ -652,7 +657,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     state.grip.copy(pivot).addScaledVector(wandDir, GRIP_AT);
 
     // 4. 人：站位跟著拉棒掛點走
-    const px = pivot.x - 0.22 - WALK_IN.x * (1 - sIn) + STEP_BACK.x * sBack;
+    // 走道隔間時固定端緊貼走道牆，站位往右讓，人不會站進牆裡
+    const side = scenery === 'corridor' ? Math.max(-0.22, 0.33 - W) : -0.22;
+    let px = pivot.x + side - WALK_IN.x * (1 - sIn) + STEP_BACK.x * sBack;
+    if (scenery === 'corridor') px = Math.max(px, X0 + 0.30);
     const pz = pivot.z + 0.40 - WALK_IN.y * (1 - sIn) + STEP_BACK.y * sBack;
     const yaw = lerp(lerp(-0.70, -0.61, sIn), -0.12, sBack);
     person.position.set(px, 0, pz);
@@ -773,7 +781,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     s('line', { x1: 150, x2: 150, y1: 130, y2: 186, stroke: ink, 'stroke-width': 4 });
     s('text', { x: 2, y: 15 }, sides[2]); s('text', { x: 298, y: 15, 'text-anchor': 'end' }, sides[3]);
     s('text', { x: 298, y: 128, 'text-anchor': 'end' }, '前導輪');
-    s('text', { x: 298, y: 146, 'text-anchor': 'end' }, '各片同位');
+    s('text', { x: 298, y: 146, 'text-anchor': 'end' }, '沿軌錯位');
     const order = []; for (let i = 0; i < N; i++) order.push(i);
     order.sort((a, b) => Math.abs(FAB_E(b)) - Math.abs(FAB_E(a)));       // 先畫偏心大的，內側折臂才不被蓋住
     order.forEach(i => {
@@ -831,10 +839,10 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     for (let i = 0; i < N; i++) {
       planPanels[i].setAttribute('x', PX(state.xs[i]));
       if (planWheels[i]) {
-        const wx = PX(state.xs[i] + W - WHEEL_BACK);
+        const wx = PX(state.xs[i] + wheelAt(i));
         planWheels[i].arm.setAttribute('x1', wx); planWheels[i].arm.setAttribute('x2', wx);
         planWheels[i].dot.setAttribute('cx', wx);
-        planShoes[i].setAttribute('x', PX(state.xs[i - 1] + W - WHEEL_BACK) - 2);
+        planShoes[i].setAttribute('x', PX(state.xs[i - 1] + W - SHOE_BACK) - 2);
       }
     }
     for (let i = 0; i < N - 1; i++) {
@@ -883,7 +891,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   // 跟拍的參考點：拉棒握把，或俯視時領頭片前導輪稍後方（收合時各片導輪在此依序排列）
   function readAnchor() {
     if (view === 'wand') { anchor.copy(state.grip); return true; }
-    if (view === 'top') { anchor.set(state.xs[N - 1] + W - 0.2, TRACK_Y, ZC); return true; }
+    if (view === 'top') { anchor.set(state.xs[N - 1] + W - WHEEL_BACK - (N - 1) * WHEEL_STEP / 2, TRACK_Y, ZC); return true; }
     return false;
   }
   function overviewDistance() { return Math.max(5.6, ((X1 - X0) / 2 + 0.55) / (Math.tan(THREE.MathUtils.degToRad(20)) * camera.aspect)); }
@@ -958,4 +966,3 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 </script>
 </body>
 </html>
-
