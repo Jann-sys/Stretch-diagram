@@ -1,0 +1,928 @@
+<!DOCTYPE html>
+<html lang="zh-Hant">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>捷安片簾作業時序模擬</title>
+<link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@500;700&family=Noto+Sans+TC:wght@400;500;700&display=swap" rel="stylesheet">
+<style>
+/* 版面構想：日光室內的 3D 場景鋪滿全頁，淺色儀表面板浮在四角；底部是俯視簡圖 + 四階段時間軸 */
+:root {
+  color-scheme: light;
+  --ink: #16202b;
+  --ink-soft: #55636f;
+  --surface: rgba(247, 249, 250, 0.9);
+  --line: rgba(22, 32, 43, 0.14);
+  --accent: #1f4fd8;
+  --ok: #12824f;
+  --bad: #c2321f;
+  --p1: #c98a12;
+  --p2: #1f4fd8;
+  --p3: #7a3fc4;
+  --p4: #12824f;
+  --room: #d5dbdf;
+  --font-body: "Noto Sans TC", "PingFang TC", "Microsoft JhengHei", sans-serif;
+  --font-num: "JetBrains Mono", ui-monospace, Menlo, monospace;
+}
+* { box-sizing: border-box; }
+html, body { height: 100%; margin: 0; }
+body {
+  background: var(--room);
+  color: var(--ink);
+  font-family: var(--font-body);
+  font-size: 14px;
+  line-height: 1.45;
+  overflow: hidden;
+  -webkit-user-select: none; user-select: none;
+}
+#stage { position: fixed; inset: 0; }
+#stage canvas { display: block; width: 100%; height: 100%; touch-action: none; }
+#labels { position: fixed; inset: 0; pointer-events: none; overflow: hidden; }
+.tag {
+  position: absolute; left: 0; top: 0;
+  transform: translate(-50%, -50%);
+  padding: 2px 7px; border-radius: 4px;
+  font-family: var(--font-num); font-size: 11px; font-weight: 700; white-space: nowrap;
+  background: #fff; color: var(--ok); border: 1px solid var(--ok);
+  font-variant-numeric: tabular-nums;
+}
+.tag.wand { color: var(--accent); border-color: var(--accent); font-family: var(--font-body); font-weight: 500; transform: translate(14px, -50%); }
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: 0 8px 28px rgba(22, 32, 43, 0.14);
+  -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px);
+}
+#top {
+  position: fixed; top: 16px; left: 16px; right: 16px;
+  display: flex; flex-wrap: wrap; gap: 10px; justify-content: space-between; align-items: flex-start;
+  pointer-events: none;
+}
+#top > * { pointer-events: auto; }
+#brand { padding: 10px 14px; max-width: 340px; }
+#brand h1 { margin: 0; font-size: 16px; font-weight: 700; letter-spacing: 0.02em; text-wrap: balance; }
+#brand p { margin: 2px 0 0; font-size: 12px; color: var(--ink-soft); }
+#metrics { display: flex; flex-wrap: wrap; gap: 0; padding: 4px 2px; }
+.metric { padding: 6px 14px; display: flex; flex-direction: column; gap: 1px; }
+.metric + .metric { border-left: 1px solid var(--line); }
+.metric .k { font-size: 11px; color: var(--ink-soft); }
+.metric .v { font-family: var(--font-num); font-size: 12px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+.metric .v b { font-size: 19px; color: var(--ink); }
+.metric .s { font-family: var(--font-num); font-size: 10.5px; color: var(--ink-soft); font-variant-numeric: tabular-nums; }
+#badge {
+  display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+  margin: 2px 0; padding: 3px 9px; border-radius: 999px;
+  font-size: 12.5px; font-weight: 700; color: #fff; background: var(--ok);
+}
+#badge::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: #fff; }
+#badge.bad { background: var(--bad); }
+
+#views {
+  position: fixed; left: 16px; top: 50%; transform: translateY(-50%);
+  display: flex; flex-direction: column; gap: 4px; padding: 6px;
+}
+#views button, .ctl, .seg {
+  font: inherit; color: var(--ink); background: transparent; border: 1px solid transparent;
+  border-radius: 7px; cursor: pointer;
+}
+#views button { padding: 7px 10px; font-size: 12.5px; text-align: left; }
+#views button:hover, .ctl:hover { background: rgba(22, 32, 43, 0.07); }
+#views button[aria-pressed="true"] { background: var(--ink); color: #fff; }
+#views hr { width: 100%; border: 0; border-top: 1px solid var(--line); margin: 2px 0; }
+button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
+#dock {
+  position: fixed; left: 16px; right: 16px; bottom: 16px; margin: 0 auto; max-width: 1000px;
+  padding: 12px 16px 10px; display: flex; flex-direction: column; gap: 8px;
+}
+#phaseRow { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+#phaseChip {
+  font-size: 11.5px; font-weight: 700; color: #fff; padding: 2px 8px; border-radius: 4px;
+  background: var(--p1); white-space: nowrap;
+}
+#phaseName { font-size: 15px; font-weight: 700; white-space: nowrap; }
+#phaseDesc { font-size: 12.5px; color: var(--ink-soft); flex: 1 1 260px; }
+#plan { width: 100%; height: auto; display: block; }
+#plan text { font-family: var(--font-num); font-size: 9px; fill: var(--ink-soft); }
+
+#timeline { position: relative; padding-top: 2px; }
+#bar { display: flex; height: 8px; border-radius: 999px; overflow: hidden; }
+#bar i { display: block; opacity: 0.3; }
+#bar i.on { opacity: 1; }
+#scrub {
+  -webkit-appearance: none; appearance: none;
+  position: absolute; left: -10px; right: -10px; top: -5px; width: calc(100% + 20px);
+  height: 22px; margin: 0; background: transparent; cursor: grab; touch-action: none;
+}
+#scrub:active { cursor: grabbing; }
+#scrub::-webkit-slider-runnable-track { height: 22px; background: transparent; }
+#scrub::-moz-range-track { height: 22px; background: transparent; }
+#scrub::-webkit-slider-thumb {
+  -webkit-appearance: none; width: 20px; height: 20px; margin-top: 1px; border-radius: 50%;
+  background: #fff; border: 5px solid var(--ink); box-shadow: 0 2px 6px rgba(22, 32, 43, 0.35);
+}
+#scrub::-moz-range-thumb {
+  width: 10px; height: 10px; border-radius: 50%;
+  background: #fff; border: 5px solid var(--ink); box-shadow: 0 2px 6px rgba(22, 32, 43, 0.35);
+}
+#segs { display: flex; margin-top: 8px; }
+.seg { padding: 2px 0; font-size: 11.5px; text-align: left; white-space: nowrap; overflow: hidden; color: var(--ink-soft); min-width: 0; }
+.seg b { font-weight: 700; color: var(--ink); }
+.seg span { font-family: var(--font-num); font-size: 10px; margin-left: 4px; }
+.seg:hover b { text-decoration: underline; }
+#controls { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; border-top: 1px solid var(--line); padding-top: 8px; }
+.ctl { padding: 6px 12px; font-size: 13px; border-color: var(--line); }
+#play { background: var(--ink); color: #fff; border-color: var(--ink); font-weight: 700; min-width: 108px; }
+#play:hover { background: #26333f; }
+#count, #speed { display: flex; gap: 2px; align-items: center; }
+#count { margin-left: auto; font-size: 12px; color: var(--ink-soft); }
+#count span { margin-right: 4px; }
+#speed { margin-left: 6px; }
+#count .ctl, #speed .ctl { padding: 4px 8px; font-family: var(--font-num); font-size: 12px; border-color: transparent; }
+#count .ctl[aria-pressed="true"], #speed .ctl[aria-pressed="true"] { background: var(--ink); color: #fff; }
+#pct { font-family: var(--font-num); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 58px; text-align: right; }
+#section { position: fixed; right: 16px; top: 112px; width: 236px; padding: 10px 12px; }
+#section h2 { margin: 0 0 4px; font-size: 12.5px; font-weight: 700; }
+#section svg { width: 100%; height: auto; display: block; }
+#section svg text { font-family: var(--font-body); font-size: 14px; fill: var(--ink-soft); }
+#section ul { list-style: none; margin: 6px 0 0; padding: 0; display: grid; grid-template-columns: 1fr 1fr; gap: 2px 8px; font-size: 10.5px; font-family: var(--font-num); }
+#section li::before { content: ""; display: inline-block; width: 8px; height: 8px; border-radius: 2px; margin-right: 5px; background: var(--c); }
+#section p { margin: 6px 0 0; font-size: 11px; color: var(--ink-soft); }
+#fail { position: fixed; inset: 0; display: none; align-items: center; justify-content: center; padding: 24px; text-align: center; }
+
+@media (max-width: 720px) {
+  #brand p, #phaseDesc, .metric .s { display: none; }
+  #brand { padding: 8px 12px; }
+  .metric { padding: 4px 10px; }
+  .metric .v b { font-size: 16px; }
+  #views { top: auto; bottom: 250px; transform: none; flex-direction: row; }
+  #views hr { display: none; }
+  #section { top: 96px; width: 150px; padding: 6px 8px; }
+  #section ul, #section p { display: none; }
+  .seg span { display: none; }
+}
+</style>
+</head>
+<body>
+
+<div id="stage"></div>
+<div id="labels">
+  <div class="tag wand" id="tagWand">拉棒</div>
+</div>
+
+<div id="top">
+  <div id="brand" class="panel">
+    <h1>捷安片簾作業時序模擬</h1>
+    <p id="brandSub">單軌 6 片 · 偏心前導輪 · 窗寬 360 cm</p>
+  </div>
+  <div id="metrics" class="panel">
+    <div class="metric">
+      <span class="k">相鄰交疊寬度</span>
+      <span class="v"><b id="mOverlap">86.0</b> cm</span>
+      <span class="s" id="mEq">5 處交疊相等</span>
+    </div>
+    <div class="metric">
+      <span class="k">展開跨距</span>
+      <span class="v"><b id="mSpan">126.0</b> / 360 cm</span>
+      <span class="s" id="mRatio">位移比 0:1:2:3:4:5</span>
+    </div>
+    <div class="metric">
+      <span class="k">分離檢查（逐幀量測）</span>
+      <span id="badge">等寬交疊 · 零分離</span>
+      <span class="s" id="mCheck">最小 86.0 ≥ 8.0 cm · 差 0.00</span>
+    </div>
+  </div>
+</div>
+
+<nav id="views" class="panel" aria-label="視角">
+  <button type="button" id="vOverview" aria-pressed="true">全景</button>
+  <button type="button" id="vTop" aria-pressed="false">俯視頂軌</button>
+  <button type="button" id="vWand" aria-pressed="false">跟拍拉棒</button>
+  <hr>
+  <button type="button" id="vXray" aria-pressed="false">透視交疊</button>
+</nav>
+
+<aside id="section" class="panel" aria-label="頂軌端面剖視">
+  <h2>頂軌端面剖視</h2>
+  <svg id="sec" viewBox="0 0 300 290" role="img" aria-label="頂軌剖面：單軌，各片布面以不同偏心量吊在同一組導輪位置下方"></svg>
+  <ul id="secLegend"></ul>
+  <p>動態片只有前導輪；後端以側向滑條搭在相鄰片導輪旁的承托座。偏心量單位 mm，片距 5 mm 為示意假設值。</p>
+</aside>
+
+<section id="dock" class="panel" aria-label="時間軸">
+  <div id="phaseRow">
+    <span id="phaseChip">階段 1</span>
+    <span id="phaseName">拉拖準備</span>
+    <span id="phaseDesc"></span>
+  </div>
+  <svg id="plan" viewBox="0 0 760 66" role="img" aria-label="頂軌俯視簡圖：四片片簾與交疊區"></svg>
+  <div id="timeline">
+    <div id="bar"></div>
+    <input id="scrub" type="range" min="0" max="1000" step="1" value="0" aria-label="作業時序">
+    <div id="segs"></div>
+  </div>
+  <div id="controls">
+    <button type="button" class="ctl" id="play">播放全流程</button>
+    <button type="button" class="ctl" id="reset">回到起點</button>
+    <div id="count" role="group" aria-label="片數">
+      <span>片數</span>
+      <button type="button" class="ctl" data-n="3" aria-pressed="false">3</button>
+      <button type="button" class="ctl" data-n="4" aria-pressed="false">4</button>
+      <button type="button" class="ctl" data-n="5" aria-pressed="false">5</button>
+      <button type="button" class="ctl" data-n="6" aria-pressed="true">6</button>
+    </div>
+    <div id="speed" role="group" aria-label="播放速度">
+      <button type="button" class="ctl" data-speed="0.5" aria-pressed="false">0.5×</button>
+      <button type="button" class="ctl" data-speed="1" aria-pressed="true">1×</button>
+      <button type="button" class="ctl" data-speed="2" aria-pressed="false">2×</button>
+    </div>
+    <span id="pct">0.0%</span>
+  </div>
+</section>
+
+<div id="fail" class="panel">3D 函式庫沒有載入成功，請重新整理頁面再試一次。</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/OrbitControls.js"></script>
+<script>
+(function () {
+  'use strict';
+  if (!window.THREE || !THREE.OrbitControls) { document.getElementById('fail').style.display = 'flex'; return; }
+
+  /* ───────── 幾何常數（1 單位 = 1 m） ───────── */
+  let N = 6;                   // 片數（單軌最多 6 片）
+  let W, LEAD_CLOSED, LEAD_OPEN;
+  const O_MIN = 0.08;          // 展開到底時的交疊
+  const H = 2.40;              // 片高
+  const TRACK_Y = 2.52;        // 頂軌高
+  const ZC = -0.44;            // 單軌中心線
+  const PITCH = 0.005;         // 相鄰片布面的前後間距（示意假設值）
+  const X0 = -1.80, X1 = 1.80; // 窗洞左右
+  const STEP_CLOSED = 0.10;    // 收合時相鄰錯位
+  const WHEEL_BACK = 0.05;     // 前導輪距片簾前緣
+  const WAND_L = 1.25, GRIP_AT = WAND_L - 0.07;
+  // 佈軌：所有片共用一條軌道。每個動態片只有一組前導輪，導輪都在軌道中心，
+  // 布面則各自偏離軌道中心不同的量（偏心），所以多片可以前後緊貼。
+  const FAB_E = i => (i - (N - 1) / 2) * PITCH;
+  const FAB_Z = i => ZC + FAB_E(i);
+  const MOVER = ['#c98a12', '#0f8b8d', '#b0428f', '#6a8f1f'];
+  const colorOf = i => i === 0 ? '#5b6770' : i === N - 1 ? '#1f4fd8' : MOVER[(i - 1) % MOVER.length];
+  // 片寬由片數決定：展開到底剛好蓋滿 360 cm 且每處交疊 8 cm
+  function setCount(n) {
+    N = n;
+    W = (X1 - X0 + (N - 1) * O_MIN) / N;
+    LEAD_CLOSED = X0 + (N - 1) * STEP_CLOSED;
+    LEAD_OPEN = X1 - W;
+  }
+  setCount(6);
+
+  const PHASES = [
+    { from: 0.00, to: 0.15, name: '拉拖準備', color: 'var(--p1)', desc: '操作員走到領頭片旁，抬手握住拉棒握把；片簾維持收合。' },
+    { from: 0.15, to: 0.75, name: '拉抻展開', color: 'var(--p2)', desc: '人拉著拉棒向右走，各片依位移比等比例同步滑出，每一處交疊寬度始終相等。' },
+    { from: 0.75, to: 0.90, name: '到位定位', color: 'var(--p3)', desc: '領頭片靠上右側擋塊並微調到位，交疊停在 8.0 cm 的安全下限。' },
+    { from: 0.90, to: 1.00, name: '鬆手檢視', color: 'var(--p4)', desc: '放開拉棒，退後一步檢視整幅片簾。' }
+  ];
+
+  /* ───────── 小工具 ───────── */
+  const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+  const lerp = (a, b, k) => a + (b - a) * k;
+  const smooth = (a, b, x) => { const k = clamp((x - a) / (b - a), 0, 1); return k * k * (3 - 2 * k); };
+  // 梯形速度曲線：起步加速、勻速、收尾減速
+  function trapPos(r, a) {
+    const vmax = 1 / (1 - a);
+    if (r < a) return vmax * r * r / (2 * a);
+    if (r < 1 - a) return vmax * (a / 2 + (r - a));
+    const q = r - (1 - a);
+    return vmax * (a / 2 + (1 - 2 * a) + q - q * q / (2 * a));
+  }
+  const trapVel = (r, a) => r < a ? r / a : (r < 1 - a ? 1 : (1 - r) / a);
+
+  /* ───────── 片簾位置：等寬交疊由構造保證 ─────────
+     x_i = X0 + i·s，s = (領頭片左緣 − X0)/(N−1)
+     交疊 O = W − s 對每一對相鄰片都相同；s 被夾在 [0.10, 0.88]，所以 O ∈ [8, 86] cm，永遠 > 0。 */
+  function solvePanels(u) {
+    const lead = lerp(LEAD_CLOSED, LEAD_OPEN, clamp(u, 0, 1));
+    const step = (lead - X0) / (N - 1);
+    const xs = [];
+    for (let i = 0; i < N; i++) xs.push(X0 + i * step);
+    return xs;
+  }
+
+  // 時序 → 展開量 u、施力 effort
+  function kinematics(t) {
+    if (t < 0.15) return { u: 0, effort: 0 };
+    if (t < 0.75) {
+      const r = (t - 0.15) / 0.60;
+      return { u: 0.97 * trapPos(r, 0.14), effort: trapVel(r, 0.14) };
+    }
+    if (t < 0.90) {
+      const r = (t - 0.75) / 0.15;
+      return { u: 0.97 + 0.03 * smooth(0, 1, r), effort: 0.3 * Math.sin(Math.PI * r) };
+    }
+    return { u: 1, effort: 0 };
+  }
+
+  /* ───────── 場景 ───────── */
+  const stage = document.getElementById('stage');
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(0xd5dbdf);
+  const camera = new THREE.PerspectiveCamera(40, 1, 0.1, 80);
+  const renderer = new THREE.WebGLRenderer({ antialias: true });
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  renderer.outputEncoding = THREE.sRGBEncoding;
+  stage.appendChild(renderer.domElement);
+
+  const controls = new THREE.OrbitControls(camera, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  controls.maxPolarAngle = Math.PI / 2 - 0.03;
+  controls.minDistance = 0.25;
+  controls.maxDistance = 20;
+
+  scene.add(new THREE.HemisphereLight(0xffffff, 0x8c8478, 0.9));
+  const sun = new THREE.DirectionalLight(0xfff1dc, 1.5);
+  sun.position.set(-1.4, 3.8, -4.4);
+  sun.castShadow = true;
+  sun.shadow.mapSize.set(2048, 2048);
+  sun.shadow.camera.near = 0.5; sun.shadow.camera.far = 14;
+  sun.shadow.camera.left = -4; sun.shadow.camera.right = 4;
+  sun.shadow.camera.top = 4; sun.shadow.camera.bottom = -4;
+  sun.shadow.bias = -0.0006;
+  scene.add(sun);
+  const fill = new THREE.DirectionalLight(0xdfe9ff, 0.35);
+  fill.position.set(2.5, 2.4, 4);
+  scene.add(fill);
+
+  function canvasTex(w, h, draw, rx, ry) {
+    const c = document.createElement('canvas'); c.width = w; c.height = h;
+    draw(c.getContext('2d'), w, h);
+    const tex = new THREE.CanvasTexture(c);
+    tex.wrapS = tex.wrapT = THREE.RepeatWrapping; tex.repeat.set(rx, ry);
+    tex.encoding = THREE.sRGBEncoding;
+    return tex;
+  }
+  const floorTex = canvasTex(512, 512, (g, w, h) => {
+    g.fillStyle = '#b89a78'; g.fillRect(0, 0, w, h);
+    for (let r = 0; r < 8; r++) {
+      g.fillStyle = r % 2 ? '#b39370' : '#bfa281'; g.fillRect(0, r * 64 + 1, w, 62);
+      g.strokeStyle = 'rgba(80,58,36,0.16)'; g.lineWidth = 1;
+      for (let k = 0; k < 9; k++) {
+        const y = r * 64 + 7 + k * 6.2;
+        g.beginPath(); g.moveTo(0, y); g.bezierCurveTo(170, y + 2, 340, y - 2, w, y); g.stroke();
+      }
+      g.fillStyle = 'rgba(70,50,30,0.35)'; g.fillRect(((r * 197) % 512), r * 64, 2, 64);
+    }
+  }, 5, 5);
+  const fabricTex = canvasTex(256, 256, (g, w, h) => {
+    g.fillStyle = '#efeae0'; g.fillRect(0, 0, w, h);
+    for (let y = 0; y < h; y += 2) { g.fillStyle = y % 4 ? 'rgba(255,255,255,0.28)' : 'rgba(170,160,140,0.3)'; g.fillRect(0, y, w, 1); }
+    for (let x = 0; x < w; x += 2) { g.fillStyle = x % 4 ? 'rgba(255,255,255,0.2)' : 'rgba(160,150,132,0.26)'; g.fillRect(x, 0, 1, h); }
+    let seed = 7; const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+    g.fillStyle = 'rgba(150,138,118,0.25)';
+    for (let i = 0; i < 380; i++) g.fillRect(rnd() * w, rnd() * h, 4 + rnd() * 14, 1.2);
+  }, 4, 10);
+
+  /* 房間與落地窗 */
+  const hideInTopView = [];
+  (function buildRoom() {
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(14, 12),
+      new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.7 }));
+    floor.rotation.x = -Math.PI / 2; floor.position.z = 2.2; floor.receiveShadow = true;
+    scene.add(floor);
+
+    const sky = new THREE.Mesh(new THREE.PlaneGeometry(9, 5), new THREE.MeshBasicMaterial({ color: 0xdff0fb }));
+    sky.position.set(0, 2, -3); scene.add(sky);
+    const hill = new THREE.Mesh(new THREE.PlaneGeometry(9, 1.3), new THREE.MeshBasicMaterial({ color: 0xa9c4b0 }));
+    hill.position.set(0, 0.65, -2.95); scene.add(hill);
+
+    const wallMat = new THREE.MeshStandardMaterial({ color: 0xe6e8e6, roughness: 0.9 });
+    const box = (w, h, d, x, y, z, mat) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
+      m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; scene.add(m); return m;
+    };
+    box(3.2, 3.2, 0.35, -3.4, 1.6, -0.58, wallMat);
+    box(3.2, 3.2, 0.35, 3.4, 1.6, -0.58, wallMat);
+    hideInTopView.push(box(3.6, 0.65, 0.35, 0, 2.875, -0.58, wallMat));
+
+    const frameMat = new THREE.MeshStandardMaterial({ color: 0x3b4650, metalness: 0.6, roughness: 0.35 });
+    [-1.775, -0.6, 0.6, 1.775].forEach(x => box(0.05, 2.55, 0.07, x, 1.275, -0.66, frameMat));
+    box(3.6, 0.04, 0.12, 0, 0.02, -0.66, frameMat);
+    const glass = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 2.55),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.12, roughness: 0.05 }));
+    glass.position.set(0, 1.275, -0.66); scene.add(glass);
+
+    // 地面刻度：每 30 cm 一格，對照 360 cm 窗寬
+    const tickMat = new THREE.MeshBasicMaterial({ color: 0x4a3a28 });
+    for (let cm = 0; cm <= 360; cm += 30) {
+      const t = new THREE.Mesh(new THREE.PlaneGeometry(0.01, cm % 90 === 0 ? 0.12 : 0.06), tickMat);
+      t.rotation.x = -Math.PI / 2; t.position.set(X0 + cm / 100, 0.003, -0.2); scene.add(t);
+    }
+  })();
+
+  /* 頂軌、片簾、拉棒 */
+  const panels = [];       // 每片的 Group，position.x = 左緣
+  const fabrics = [];
+  const overlapStrips = [];
+  const PANEL_TOP = TRACK_Y - 0.051;
+  const wand = new THREE.Group();
+  const aluMat = new THREE.MeshStandardMaterial({ color: 0xcfd6dc, metalness: 0.8, roughness: 0.3 });
+  const ACCENT = 0x1f4fd8, OK = 0x12824f;
+
+  const blinds = new THREE.Group(); scene.add(blinds);
+  (function buildRailAndWand() {
+    const L = X1 - X0, yBot = TRACK_Y - 0.015, yTop = TRACK_Y + 0.015;
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xf2f3f1, metalness: 0.15, roughness: 0.45 });
+    const lipMat = new THREE.MeshStandardMaterial({ color: 0x59646d, metalness: 0.3, roughness: 0.5 });
+    const rbox = (h, d, y, z, mat) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(L, h, d), mat || railMat);
+      m.position.set(0, y, ZC + z); m.castShadow = true; scene.add(m); return m;
+    };
+    hideInTopView.push(rbox(0.003, 0.027, yTop - 0.0015, 0));             // 上蓋（俯視時掀開）
+    [-0.012, 0.012].forEach(z => rbox(0.03, 0.003, TRACK_Y, z));         // 單軌兩側壁
+    [-0.007, 0.007].forEach(z => rbox(0.002, 0.007, yBot + 0.001, z, lipMat));  // 承軌唇
+    const stop = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.02, 0.02),
+      new THREE.MeshStandardMaterial({ color: 0x7a3fc4, roughness: 0.4 }));
+    stop.position.set(X1 - 0.006, TRACK_Y, ZC); scene.add(stop);
+
+    // 拉棒：原點在掛點，桿身沿 −Y
+    const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, WAND_L, 12),
+      new THREE.MeshStandardMaterial({ color: 0xf4f6f8, metalness: 0.3, roughness: 0.25 }));
+    rod.position.y = -WAND_L / 2; rod.castShadow = true; wand.add(rod);
+    const hook = new THREE.Mesh(new THREE.CylinderGeometry(0.011, 0.011, 0.04, 12),
+      new THREE.MeshStandardMaterial({ color: 0x8d99a3, metalness: 0.8, roughness: 0.25 }));
+    hook.position.y = -0.02; wand.add(hook);
+    const grip = new THREE.Mesh(new THREE.CylinderGeometry(0.014, 0.013, 0.14, 14),
+      new THREE.MeshStandardMaterial({ color: ACCENT, roughness: 0.5 }));
+    grip.position.y = -GRIP_AT; grip.castShadow = true; wand.add(grip);
+    scene.add(wand);
+  })();
+
+  const WHEEL_Y = TRACK_Y - 0.007, ARM_Y = TRACK_Y - 0.020;
+  function buildPanels() {
+    while (blinds.children.length) {
+      const old = blinds.children[0];
+      old.traverse(o => { if (o.geometry) o.geometry.dispose(); });
+      blinds.remove(old);
+    }
+    panels.length = 0; fabrics.length = 0; overlapStrips.length = 0;
+    const hemMat = new THREE.MeshBasicMaterial({ color: 0xb9b2a4 });
+    for (let i = 0; i < N; i++) {
+      const g = new THREE.Group();
+      g.position.z = FAB_Z(i);
+      const cMat = new THREE.MeshStandardMaterial({ color: new THREE.Color(colorOf(i)), roughness: 0.5 });
+      const part = (w, h, d, x, y, z, mat) => {
+        const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat); m.position.set(x, y, z); m.castShadow = true; g.add(m); return m;
+      };
+      part(W, 0.03, 0.002, W / 2, PANEL_TOP + 0.015, 0, cMat);            // 上樑
+      const mat = new THREE.MeshStandardMaterial({ map: fabricTex, color: i % 2 ? 0xf2ede4 : 0xfffaf2, roughness: 0.9 });
+      const fabric = part(W, H, 0.002, W / 2, PANEL_TOP - H / 2, 0, mat);
+      fabric.receiveShadow = true; fabrics.push(fabric);
+      [0.003, W - 0.003].forEach(x => { part(0.006, H, 0.003, x, PANEL_TOP - H / 2, 0, hemMat).castShadow = false; });
+      part(W, 0.03, 0.003, W / 2, PANEL_TOP - H + 0.015, 0, aluMat);      // 下擺配重
+
+      const toTrack = -FAB_E(i);            // 這一片的局部座標裡，軌道中心的 z
+      const front = W - WHEEL_BACK;
+      const hang = x => {                    // 吊桿穿過軌縫，再用偏心折臂橫向接到上樑
+        part(0.012, WHEEL_Y - ARM_Y, 0.002, x, (WHEEL_Y + ARM_Y) / 2, toTrack, cMat);
+        part(0.03, 0.002, Math.abs(toTrack) + 0.002, x, ARM_Y, toTrack / 2, cMat);
+      };
+      if (i === 0) {                         // 固定片：前後兩個固定座鎖在軌內，沒有導輪
+        [0.08, front].forEach(x => { hang(x); part(0.03, 0.012, 0.012, x, WHEEL_Y, toTrack, cMat); });
+      } else {                               // 動態片：只有前導輪
+        hang(front);
+        [-0.007, 0.007].forEach(dz => {
+          const wheel = new THREE.Mesh(new THREE.CylinderGeometry(0.006, 0.006, 0.005, 20), cMat);
+          wheel.rotation.x = Math.PI / 2; wheel.position.set(front, WHEEL_Y, toTrack + dz); g.add(wheel);
+        });
+        part(0.004, 0.003, 0.014, front, WHEEL_Y, toTrack, cMat);         // 輪軸
+        // 側向滑條：沿上樑全長朝相鄰片伸出，搭在那一片導輪旁的承托座上，撐住本片後端
+        part(W, 0.0015, PITCH * 0.6, W / 2, PANEL_TOP + 0.026, -PITCH * 0.3, cMat);
+      }
+      if (i < N - 1) part(0.03, 0.002, PITCH * 0.55, front, PANEL_TOP + 0.024, PITCH * 0.475, cMat);   // 承托座
+      blinds.add(g); panels.push(g);
+    }
+    // 交疊區：兩層布重疊處略深；透視模式下改為綠色
+    for (let i = 0; i < N - 1; i++) {
+      const strip = new THREE.Mesh(new THREE.PlaneGeometry(1, H - 0.03),
+        new THREE.MeshBasicMaterial({ color: 0x3a3020, transparent: true, opacity: 0.12, depthWrite: false }));
+      strip.position.set(0, PANEL_TOP - H / 2, FAB_Z(i + 1) + 0.0012);
+      strip.renderOrder = 2; blinds.add(strip); overlapStrips.push(strip);
+    }
+    applyXray();
+  }
+  function applyXray() {
+    fabrics.forEach(f => { f.material.transparent = xray; f.material.opacity = xray ? 0.4 : 1; f.material.depthWrite = !xray; f.material.needsUpdate = true; });
+    overlapStrips.forEach(st => { st.material.color.setHex(xray ? OK : 0x3a3020); st.material.opacity = xray ? 0.5 : 0.12; st.material.depthTest = !xray; });
+  }
+  let xray = false;
+  buildPanels();
+
+  /* ───────── 操作員：關節點 + 兩段式 IK，手掌精確落在握把上 ───────── */
+  const person = new THREE.Group();   // 局部座標：前方 −Z，右手 +X
+  scene.add(person);
+  const HIP_Y = 0.90, SHOULDER_Y = 0.48, SHOULDER_X = 0.20, HIP_X = 0.09;
+  const UPPER = 0.29, FORE = 0.27, THIGH = 0.46, SHIN = 0.46, ANKLE_Y = 0.07;
+  const body = {};
+  (function buildPerson() {
+    const skin = new THREE.MeshStandardMaterial({ color: 0xe2b58c, roughness: 0.6 });
+    const shirt = new THREE.MeshStandardMaterial({ color: 0x2b4a63, roughness: 0.75 });
+    const pants = new THREE.MeshStandardMaterial({ color: 0x3a3f46, roughness: 0.8 });
+    const shoe = new THREE.MeshStandardMaterial({ color: 0xf1f1ee, roughness: 0.5 });
+    const hair = new THREE.MeshStandardMaterial({ color: 0x241d19, roughness: 0.85 });
+    const add = (parent, geo, mat) => { const m = new THREE.Mesh(geo, mat); m.castShadow = true; parent.add(m); return m; };
+    const limb = (rStart, rEnd, len, mat) => add(person, new THREE.CylinderGeometry(rEnd, rStart, len, 14), mat);
+    const ball = (r, mat) => add(person, new THREE.SphereGeometry(r, 14, 12), mat);
+
+    const upper = new THREE.Group(); person.add(upper); body.upper = upper;
+    const pelvis = add(upper, new THREE.CylinderGeometry(0.15, 0.14, 0.18, 18), pants);
+    pelvis.scale.z = 0.66; pelvis.position.y = 0.02;
+    const torso = add(upper, new THREE.CylinderGeometry(0.185, 0.145, 0.46, 18), shirt);
+    torso.scale.z = 0.6; torso.position.y = 0.32;
+    const yoke = add(upper, new THREE.SphereGeometry(0.185, 18, 12), shirt);
+    yoke.scale.set(1.05, 0.34, 0.62); yoke.position.y = 0.53;
+    const head = new THREE.Group(); head.position.y = 0.60; upper.add(head); body.head = head;
+    add(head, new THREE.CylinderGeometry(0.045, 0.05, 0.1, 12), skin);
+    add(head, new THREE.SphereGeometry(0.105, 20, 16), skin).position.y = 0.14;
+    const cap = add(head, new THREE.SphereGeometry(0.11, 20, 16, 0, Math.PI * 2, 0, Math.PI * 0.56), hair);
+    cap.position.set(0, 0.148, 0.012); cap.rotation.x = 0.25;
+
+    ['L', 'R'].forEach(s => {
+      body['upperArm' + s] = limb(0.045, 0.038, UPPER, shirt);
+      body['foreArm' + s] = limb(0.036, 0.03, FORE, skin);
+      body['shoulder' + s] = ball(0.05, shirt);
+      body['elbow' + s] = ball(0.038, shirt);
+      body['hand' + s] = ball(0.042, skin);
+      body['thigh' + s] = limb(0.075, 0.058, THIGH, pants);
+      body['shin' + s] = limb(0.056, 0.044, SHIN, pants);
+      body['knee' + s] = ball(0.058, pants);
+      body['foot' + s] = add(person, new THREE.BoxGeometry(0.095, 0.07, 0.25), shoe);
+    });
+  })();
+
+  const UP = new THREE.Vector3(0, 1, 0);
+  const tA = new THREE.Vector3(), tB = new THREE.Vector3(), tC = new THREE.Vector3();
+  function place(mesh, p, q) {
+    mesh.position.copy(p).add(q).multiplyScalar(0.5);
+    mesh.quaternion.setFromUnitVectors(UP, tA.copy(q).sub(p).normalize());
+  }
+  // 兩段式 IK：給起點 a、目標 t、兩段長度與肘/膝朝向，回傳關節點 mid 與實際末端 end
+  function ik(a, t, l1, l2, pole, mid, end) {
+    const dir = tB.copy(t).sub(a);
+    const d = dir.length();
+    const dc = clamp(d, Math.abs(l1 - l2) + 1e-3, l1 + l2 - 1e-3);
+    dir.multiplyScalar(1 / d);
+    end.copy(a).addScaledVector(dir, dc);
+    const along = (l1 * l1 - l2 * l2 + dc * dc) / (2 * dc);
+    const off = Math.sqrt(Math.max(0, l1 * l1 - along * along));
+    const perp = tC.copy(pole).addScaledVector(dir, -pole.dot(dir)).normalize();
+    mid.copy(a).addScaledVector(dir, along).addScaledVector(perp, off);
+  }
+
+  /* ───────── 狀態更新 ───────── */
+  const state = { t: 0, xs: [], overlaps: [], grip: new THREE.Vector3(), handGap: 0 };
+  const pivot = new THREE.Vector3(), wandDir = new THREE.Vector3(), DOWN = new THREE.Vector3(0, -1, 0);
+  const v = { sh: new THREE.Vector3(), mid: new THREE.Vector3(), end: new THREE.Vector3(), tgt: new THREE.Vector3(),
+              hip: new THREE.Vector3(), pole: new THREE.Vector3(), mv: new THREE.Vector3(), rest: new THREE.Vector3() };
+  const WALK_IN = new THREE.Vector2(0.50, -0.60), STEP_BACK = new THREE.Vector2(-0.10, 0.50);
+  const L_IN = WALK_IN.length(), L_BACK = STEP_BACK.length(), STRIDE = 0.34;
+  function update(t) {
+    t = clamp(t, 0, 1);
+    state.t = t;
+    const k = kinematics(t);
+
+    // 1. 片簾
+    const xs = solvePanels(k.u);
+    state.xs = xs;
+    for (let i = 0; i < N; i++) panels[i].position.x = xs[i];
+    // 交疊量取自 mesh 的實際位置，作為獨立驗證
+    state.overlaps = [];
+    for (let i = 0; i < N - 1; i++) {
+      const a = panels[i + 1].position.x, b = panels[i].position.x + W;
+      state.overlaps.push(b - a);
+      overlapStrips[i].position.x = (a + b) / 2;
+      overlapStrips[i].scale.x = Math.max(b - a, 1e-4);
+    }
+
+    // 2. 握持時序
+    const reach = t < 0.5 ? smooth(0.08, 0.135, t) : 1 - smooth(0.905, 0.95, t);  // 手伸向握把
+    const hold = t < 0.5 ? smooth(0.13, 0.15, t) : 1 - smooth(0.90, 0.915, t);    // 握緊、拉棒受力
+    const sIn = smooth(0.005, 0.11, t), sBack = smooth(0.925, 0.995, t);
+
+    // 3. 拉棒：掛在領頭片前緣；受力時下端朝行進方向與室內側傾斜，鬆手後小幅回擺
+    pivot.set(xs[N - 1] + W - 0.03, PANEL_TOP, FAB_Z(N - 1) + 0.015);
+    let tiltX = hold * (0.03 + 0.09 * k.effort), tiltZ = hold * 0.10;
+    if (t > 0.915) {
+      const tau = t - 0.915, decay = Math.exp(-tau * 70);
+      tiltX += 0.035 * decay * Math.sin(tau * 240);
+      tiltZ += 0.06 * decay * Math.cos(tau * 240);
+    }
+    wandDir.set(Math.sin(tiltX), -1, Math.sin(tiltZ)).normalize();
+    wand.position.copy(pivot);
+    wand.quaternion.setFromUnitVectors(DOWN, wandDir);
+    state.grip.copy(pivot).addScaledVector(wandDir, GRIP_AT);
+
+    // 4. 人：站位跟著拉棒掛點走
+    const px = pivot.x - 0.22 - WALK_IN.x * (1 - sIn) + STEP_BACK.x * sBack;
+    const pz = pivot.z + 0.40 - WALK_IN.y * (1 - sIn) + STEP_BACK.y * sBack;
+    const yaw = lerp(lerp(-0.70, -0.61, sIn), -0.12, sBack);
+    person.position.set(px, 0, pz);
+    person.rotation.y = yaw;
+
+    // 步態：相位由累計移動距離決定，往回拖時間軸腳步也跟著倒退
+    const dist = L_IN * sIn + (xs[N - 1] - LEAD_CLOSED) + L_BACK * sBack;
+    let env;
+    if (t < 0.15) { v.mv.set(WALK_IN.x / L_IN, 0, WALK_IN.y / L_IN); env = smooth(0.005, 0.03, t) * (1 - smooth(0.085, 0.11, t)); }
+    else if (t < 0.90) { v.mv.set(1, 0, 0); env = k.effort; }
+    else { v.mv.set(STEP_BACK.x / L_BACK, 0, STEP_BACK.y / L_BACK); env = smooth(0.925, 0.94, t) * (1 - smooth(0.98, 0.995, t)); }
+    v.mv.applyAxisAngle(UP, -yaw);   // 轉到人物局部座標
+    const amp = Math.min(1, env * 3);
+    const cyc = ((dist / STRIDE) % 2 + 2) % 2;
+    const hipY = HIP_Y - 0.02 * amp * Math.abs(Math.cos(Math.PI * cyc));
+    body.upper.position.y = hipY;
+    body.upper.rotation.x = -0.03 * reach - 0.05 * k.effort;
+
+    [['L', -1, cyc], ['R', 1, (cyc + 1) % 2]].forEach(([s, side, c]) => {
+      let along, lift = 0;
+      if (c < 1) along = (0.5 - c) * STRIDE;                 // 支撐腳：相對身體往後滑 = 在地面上不動
+      else { const q = c - 1; along = (-0.5 + q * q * (3 - 2 * q)) * STRIDE; lift = 0.07 * Math.sin(Math.PI * q); }
+      along *= amp; lift *= amp;
+      v.hip.set(side * HIP_X, hipY, 0);
+      v.tgt.set(side * HIP_X, ANKLE_Y + lift, 0).addScaledVector(v.mv, along);
+      v.pole.set(0, 0, -1);
+      ik(v.hip, v.tgt, THIGH, SHIN, v.pole, v.mid, v.end);
+      place(body['thigh' + s], v.hip, v.mid);
+      place(body['shin' + s], v.mid, v.end);
+      body['knee' + s].position.copy(v.mid);
+      body['foot' + s].position.set(v.end.x, v.end.y - 0.035, v.end.z - 0.055);
+    });
+
+    // 手臂
+    person.updateMatrixWorld(true);
+    const swing = amp * 0.10 * Math.sin(Math.PI * cyc);
+    [['L', -1], ['R', 1]].forEach(([s, side]) => {
+      v.sh.set(side * SHOULDER_X, SHOULDER_Y, 0).applyEuler(body.upper.rotation).add(body.upper.position);
+      v.rest.set(side * (SHOULDER_X + 0.04), hipY - 0.03, -0.04).addScaledVector(v.mv, side * swing);
+      if (s === 'R') {
+        v.tgt.copy(state.grip); person.worldToLocal(v.tgt);
+        v.tgt.lerpVectors(v.rest, v.tgt, reach);
+        v.tgt.z -= 0.10 * Math.sin(Math.PI * reach) * (reach < 1 ? 1 : 0);  // 抬手時略往前繞
+      } else v.tgt.copy(v.rest);
+      v.pole.set(side * 0.5, -1, 0.45);
+      ik(v.sh, v.tgt, UPPER, FORE, v.pole, v.mid, v.end);
+      place(body['upperArm' + s], v.sh, v.mid);
+      place(body['foreArm' + s], v.mid, v.end);
+      body['shoulder' + s].position.copy(v.sh);
+      body['elbow' + s].position.copy(v.mid);
+      body['hand' + s].position.copy(v.end);
+      if (s === 'R') { tA.copy(v.end); person.localToWorld(tA); state.handGap = tA.distanceTo(state.grip); }
+    });
+    body.head.rotation.set(0.12 * reach, lerp(0.05, 0.3, reach), 0);
+
+    paintHud(t);
+  }
+
+  /* ───────── HUD ───────── */
+  const $ = id => document.getElementById(id);
+  const scrub = $('scrub'), bar = $('bar'), segs = $('segs');
+  PHASES.forEach((p, i) => {
+    const w = ((p.to - p.from) * 100) + '%';
+    const b = document.createElement('i'); b.style.width = w; b.style.background = p.color; bar.appendChild(b);
+    const s = document.createElement('button'); s.type = 'button'; s.className = 'seg'; s.style.width = w;
+    s.innerHTML = '<b>' + p.name + '</b><span>' + Math.round(p.from * 100) + '%</span>';
+    s.title = '跳到「' + p.name + '」';
+    s.addEventListener('click', () => { setPlaying(false); update(i === 0 ? 0 : p.from + 0.002); });
+    segs.appendChild(s);
+  });
+
+  // 俯視簡圖（橫向 2 單位 = 1 cm）、交疊標籤與端面剖視，片數改變時整組重畫
+  const plan = $('plan'), sec = $('sec'), tagWand = $('tagWand'), NS = 'http://www.w3.org/2000/svg';
+  const svgEl = (parent, tag, attrs, text) => {
+    const e = document.createElementNS(NS, tag);
+    for (const a in attrs) e.setAttribute(a, attrs[a]);
+    if (text != null) e.textContent = text;
+    parent.appendChild(e); return e;
+  };
+  const SUBS = '₀₁₂₃₄₅₆₇₈₉';
+  const PX = x => 20 + (x - X0) * 200, LANE = i => 6 + i * (36 / (N - 1)), TRACK_LANE = 26;
+  let planOverlaps = [], planPanels = [], planWheels = [], planShoes = [], planGrip = null, tags = [];
+
+  function buildHud() {
+    plan.textContent = ''; sec.textContent = ''; $('secLegend').textContent = '';
+    tags.forEach(t => t.remove());
+    planOverlaps = []; planPanels = []; planWheels = []; planShoes = []; tags = [];
+    const el = (tag, attrs, text) => svgEl(plan, tag, attrs, text);
+    for (let i = 0; i < N - 1; i++) planOverlaps.push(el('rect', { y: LANE(i), height: LANE(i + 1) + 4 - LANE(i), fill: '#12824f', opacity: 0.25 }));
+    el('line', { x1: 20, x2: 740, y1: TRACK_LANE, y2: TRACK_LANE, stroke: '#16202b', 'stroke-width': 1, 'stroke-dasharray': '5 3' });
+    el('text', { x: 744, y: TRACK_LANE + 3 }, '軌');
+    for (let i = 0; i < N; i++) planPanels.push(el('rect', { y: LANE(i), height: 4, width: W * 200, rx: 1, fill: colorOf(i) }));
+    for (let i = 0; i < N; i++) {
+      planShoes.push(i > 0 ? el('rect', { y: LANE(i) - 1, width: 4, height: 6, fill: colorOf(i - 1), stroke: '#fff', 'stroke-width': 0.6 }) : null);
+      planWheels.push(i > 0 ? {
+        arm: el('line', { y1: LANE(i) + 2, y2: TRACK_LANE, stroke: colorOf(i), 'stroke-width': 1.4 }),
+        dot: el('circle', { r: 2.6, cy: TRACK_LANE, fill: colorOf(i), stroke: '#fff', 'stroke-width': 0.8 })
+      } : null);
+    }
+    planGrip = el('circle', { r: 3.5, cy: 48, fill: '#fff', stroke: '#1f4fd8', 'stroke-width': 2 });
+    el('line', { x1: 20, x2: 740, y1: 54, y2: 54, stroke: '#55636f', 'stroke-width': 1 });
+    for (let cm = 0; cm <= 360; cm += 30) {
+      el('line', { x1: 20 + cm * 2, x2: 20 + cm * 2, y1: 54, y2: cm % 90 ? 51 : 48, stroke: '#55636f', 'stroke-width': 1 });
+      if (cm % 90 === 0) el('text', { x: 20 + cm * 2, y: 64, 'text-anchor': cm === 0 ? 'start' : cm === 360 ? 'end' : 'middle' }, cm + ' cm');
+    }
+    el('text', { x: 4, y: 12 }, '窗'); el('text', { x: 4, y: 45 }, '內');
+
+    for (let i = 0; i < N - 1; i++) {
+      const t = document.createElement('div'); t.className = 'tag';
+      $('labels').appendChild(t); tags.push(t);
+    }
+
+    // 端面剖視：5 單位 = 1 mm
+    const X = mm => 150 + mm * 5, s = (tag, attrs, text) => svgEl(sec, tag, attrs, text), rail = '#aab3ba', ink = '#16202b';
+    s('rect', { x: X(-13), y: 20, width: 130, height: 10, fill: rail });
+    [-13, 10.5].forEach(mm => s('rect', { x: X(mm), y: 20, width: 12.5, height: 150, fill: rail }));
+    [-10.5, 3.5].forEach(mm => s('rect', { x: X(mm), y: 160, width: 35, height: 10, fill: '#59646d' }));
+    [-7, 7].forEach(mm => s('rect', { x: X(mm) - 12.5, y: 100, width: 25, height: 60, rx: 5, fill: ink }));
+    s('line', { x1: X(-7), x2: X(7), y1: 130, y2: 130, stroke: ink, 'stroke-width': 4 });
+    s('line', { x1: 150, x2: 150, y1: 130, y2: 186, stroke: ink, 'stroke-width': 4 });
+    s('text', { x: 2, y: 15 }, '窗側'); s('text', { x: 298, y: 15, 'text-anchor': 'end' }, '室內側');
+    s('text', { x: 298, y: 128, 'text-anchor': 'end' }, '前導輪');
+    s('text', { x: 298, y: 146, 'text-anchor': 'end' }, '各片同位');
+    const order = []; for (let i = 0; i < N; i++) order.push(i);
+    order.sort((a, b) => Math.abs(FAB_E(b)) - Math.abs(FAB_E(a)));       // 先畫偏心大的，內側折臂才不被蓋住
+    order.forEach(i => {
+      const c = colorOf(i), fx = X(FAB_E(i) * 1000);
+      s('polyline', { points: '150,186 ' + fx + ',186 ' + fx + ',204', fill: 'none', stroke: c, 'stroke-width': 3, 'stroke-linejoin': 'round' });
+      s('rect', { x: fx - 4, y: 204, width: 8, height: 28, fill: c });                                  // 上樑
+      s('line', { x1: fx, x2: fx, y1: 232, y2: 262, stroke: c, 'stroke-width': 2.5 });                  // 布面
+      if (i > 0) s('line', { x1: fx - 4, x2: fx - 15, y1: 208, y2: 208, stroke: c, 'stroke-width': 2.5 });   // 側向滑條
+      if (i < N - 1) s('rect', { x: fx + 5, y: 210, width: 12, height: 4, fill: c });                   // 承托座
+    });
+    s('line', { x1: X(FAB_E(0) * 1000), x2: X(FAB_E(N - 1) * 1000), y1: 268, y2: 268, stroke: '#55636f', 'stroke-width': 1 });
+    s('text', { x: 150, y: 285, 'text-anchor': 'middle' }, N + ' 片總厚 ' + ((N - 1) * PITCH * 1000).toFixed(0) + ' mm');
+    for (let i = 0; i < N; i++) {
+      const li = document.createElement('li'); li.style.setProperty('--c', colorOf(i));
+      const e = FAB_E(i) * 1000;
+      li.textContent = 'P' + (i + 1) + (i === 0 ? ' 固定 ' : ' 偏心 ') + (e > 0 ? '+' : e < 0 ? '−' : '') + Math.abs(e).toFixed(1);
+      $('secLegend').appendChild(li);
+    }
+
+    const ratio = []; for (let i = 0; i < N; i++) ratio.push(i);
+    $('mEq').textContent = (N - 1) + ' 處交疊相等';
+    $('mRatio').textContent = '位移比 ' + ratio.join(':');
+    $('brandSub').textContent = '單軌 ' + N + ' 片 · 偏心前導輪 · 單片 ' + (W * 100).toFixed(1) + ' cm · 窗寬 360 cm';
+    document.querySelectorAll('#count .ctl').forEach(b => b.setAttribute('aria-pressed', +b.dataset.n === N ? 'true' : 'false'));
+  }
+  buildHud();
+
+  let scrubbing = false;
+
+  function paintHud(t) {
+    const o = state.overlaps, minO = Math.min.apply(null, o), spread = Math.max.apply(null, o) - minO;
+    const span = state.xs[N - 1] + W - X0;
+    $('mOverlap').textContent = (minO * 100).toFixed(1);
+    $('mSpan').textContent = (span * 100).toFixed(1);
+    const ok = minO >= O_MIN - 1e-9 && spread < 1e-9;
+    const badge = $('badge');
+    badge.textContent = ok ? '等寬交疊 · 零分離' : '交疊異常';
+    badge.classList.toggle('bad', !ok);
+    $('mCheck').textContent = '最小 ' + (minO * 100).toFixed(1) + ' ≥ ' + (O_MIN * 100).toFixed(1) + ' cm · 差 ' + (spread * 100).toFixed(2);
+    $('pct').textContent = (t * 100).toFixed(1) + '%';
+    if (!scrubbing) scrub.value = Math.round(t * 1000);
+
+    let idx = PHASES.findIndex(p => t < p.to); if (idx < 0) idx = PHASES.length - 1;
+    const p = PHASES[idx];
+    $('phaseChip').textContent = '階段 ' + (idx + 1);
+    $('phaseChip').style.background = p.color;
+    $('phaseName').textContent = p.name;
+    $('phaseDesc').textContent = p.desc;
+    for (let i = 0; i < bar.children.length; i++) bar.children[i].classList.toggle('on', i === idx);
+
+    for (let i = 0; i < N; i++) {
+      planPanels[i].setAttribute('x', PX(state.xs[i]));
+      if (planWheels[i]) {
+        const wx = PX(state.xs[i] + W - WHEEL_BACK);
+        planWheels[i].arm.setAttribute('x1', wx); planWheels[i].arm.setAttribute('x2', wx);
+        planWheels[i].dot.setAttribute('cx', wx);
+        planShoes[i].setAttribute('x', PX(state.xs[i - 1] + W - WHEEL_BACK) - 2);
+      }
+    }
+    for (let i = 0; i < N - 1; i++) {
+      planOverlaps[i].setAttribute('x', PX(state.xs[i + 1]));
+      planOverlaps[i].setAttribute('width', o[i] * 200);
+      tags[i].textContent = 'O' + SUBS[i + 1] + SUBS[i + 2] + ' ' + (o[i] * 100).toFixed(1);
+    }
+    planGrip.setAttribute('cx', PX(state.grip.x));
+  }
+
+  const proj = new THREE.Vector3();
+  function pin(node, x, y, z) {
+    proj.set(x, y, z).project(camera);
+    if (proj.z > 1 || proj.z < -1) { node.style.visibility = 'hidden'; return; }
+    node.style.visibility = 'visible';
+    node.style.left = ((proj.x * 0.5 + 0.5) * window.innerWidth) + 'px';
+    node.style.top = ((-proj.y * 0.5 + 0.5) * window.innerHeight) + 'px';
+  }
+  function pinLabels() {
+    $('labels').style.display = view === 'top' ? 'none' : '';
+    for (let i = 0; i < N - 1; i++) pin(tags[i], overlapStrips[i].position.x, 0.5 + i * Math.min(0.36, 1.5 / (N - 1)), FAB_Z(N - 1) + 0.03);
+    pin(tagWand, state.grip.x, state.grip.y + 0.28, state.grip.z);
+  }
+
+  /* ───────── 播放與時間軸 ───────── */
+  let playing = false, speed = 1, last = performance.now();
+  const DURATION = 14;
+  function setPlaying(on) {
+    playing = on;
+    $('play').textContent = on ? '暫停' : (state.t >= 0.999 ? '重新播放' : '播放全流程');
+  }
+  $('play').addEventListener('click', () => { if (!playing && state.t >= 0.999) update(0); setPlaying(!playing); });
+  $('reset').addEventListener('click', () => { setPlaying(false); update(0); });
+  scrub.addEventListener('pointerdown', () => { scrubbing = true; });
+  window.addEventListener('pointerup', () => { scrubbing = false; });
+  scrub.addEventListener('input', () => { setPlaying(false); update(scrub.value / 1000); });
+  document.querySelectorAll('#speed .ctl').forEach(b => b.addEventListener('click', () => {
+    speed = parseFloat(b.dataset.speed);
+    document.querySelectorAll('#speed .ctl').forEach(o => o.setAttribute('aria-pressed', o === b ? 'true' : 'false'));
+  }));
+  window.addEventListener('keydown', e => {
+    if (e.code === 'Space' && e.target.tagName !== 'BUTTON') { e.preventDefault(); $('play').click(); }
+  });
+
+  /* ───────── 視角 ───────── */
+  let view = 'overview', moving = false;
+  const camGoal = new THREE.Vector3(), tgtGoal = new THREE.Vector3(), lastAnchor = new THREE.Vector3(), anchor = new THREE.Vector3();
+  // 跟拍的參考點：拉棒握把，或俯視時領頭片前導輪稍後方（收合時各片導輪在此依序排列）
+  function readAnchor() {
+    if (view === 'wand') { anchor.copy(state.grip); return true; }
+    if (view === 'top') { anchor.set(state.xs[N - 1] + W - 0.2, TRACK_Y, ZC); return true; }
+    return false;
+  }
+  function overviewDistance() { return Math.max(5.6, 2.35 / (Math.tan(THREE.MathUtils.degToRad(20)) * camera.aspect)); }
+  function setView(name, instant) {
+    view = name;
+    if (name === 'overview') { camGoal.set(0.5, 1.75, overviewDistance()); tgtGoal.set(0, 1.0, -0.2); }
+    if (name === 'top') { readAnchor(); tgtGoal.copy(anchor); camGoal.copy(anchor).add(tA.set(0, Math.max(0.36, 0.15 / (Math.tan(THREE.MathUtils.degToRad(20)) * camera.aspect)), 0.06)); }
+    if (name === 'wand') { camGoal.copy(state.grip).add(tA.set(0.95, 0.3, 1.9)); tgtGoal.copy(state.grip).add(tA.set(-0.2, 0.05, 0)); }
+    if (readAnchor()) lastAnchor.copy(anchor);
+    hideInTopView.forEach(m => { m.visible = name !== 'top'; });
+    moving = !instant;
+    if (instant) { camera.position.copy(camGoal); controls.target.copy(tgtGoal); }
+    [['vOverview', 'overview'], ['vTop', 'top'], ['vWand', 'wand']].forEach(([id, n]) => $(id).setAttribute('aria-pressed', n === name ? 'true' : 'false'));
+  }
+  controls.addEventListener('start', () => { moving = false; });
+  $('vOverview').addEventListener('click', () => setView('overview'));
+  $('vTop').addEventListener('click', () => setView('top'));
+  $('vWand').addEventListener('click', () => setView('wand'));
+  $('vXray').addEventListener('click', () => {
+    xray = !xray;
+    $('vXray').setAttribute('aria-pressed', xray ? 'true' : 'false');
+    applyXray();
+  });
+  document.querySelectorAll('#count .ctl').forEach(b => b.addEventListener('click', () => {
+    setCount(+b.dataset.n); buildPanels(); buildHud(); update(state.t);
+  }));
+
+  function resize() {
+    const w = window.innerWidth, h = window.innerHeight;
+    renderer.setSize(w, h, false);
+    camera.aspect = w / h;
+    camera.setViewOffset(w, h, 0, Math.round(h * 0.12), w, h);   // 畫面往上讓，避開底部時間軸
+    camera.updateProjectionMatrix();
+  }
+  window.addEventListener('resize', () => { resize(); if (view === 'overview') setView(view, true); });
+
+  function frame(now) {
+    requestAnimationFrame(frame);
+    const dt = Math.min((now - last) / 1000, 0.1); last = now;
+    if (playing) {
+      const next = state.t + dt / DURATION * speed;
+      update(Math.min(next, 1));
+      if (next >= 1) setPlaying(false);
+    }
+    if (readAnchor()) {               // 跟拍：相機與目標一起平移參考點的位移量
+      tA.copy(anchor).sub(lastAnchor); lastAnchor.copy(anchor);
+      camera.position.add(tA); controls.target.add(tA); camGoal.add(tA); tgtGoal.add(tA);
+    }
+    if (moving) {
+      camera.position.lerp(camGoal, 0.1); controls.target.lerp(tgtGoal, 0.1);
+      if (camera.position.distanceTo(camGoal) < 0.01) moving = false;
+    }
+    controls.update();
+    renderer.render(scene, camera);
+    pinLabels();
+  }
+
+  resize();
+  update(0);
+  setView('overview', true);
+  window.sim = { update, state };
+  const calm = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+  if (!calm) setPlaying(true); else setPlaying(false);
+  requestAnimationFrame(frame);
+})();
+</script>
+</body>
+</html>
