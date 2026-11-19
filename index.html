@@ -763,11 +763,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     const sides = scenery === 'window' ? ['窗', '內', '窗側', '室內側'] : ['背', '前', '背面側', '操作側'];
     el('text', { x: 4, y: 12 }, sides[0]); el('text', { x: 4, y: 45 }, sides[1]);
 
-    for (let i = 0; i < N - 1; i++) {
-      const t = document.createElement('div'); t.className = 'tag';
-      $('labels').appendChild(t); tags.push(t);
-    }
-
     // 端面剖視：5 單位 = 1 mm
     const X = mm => 150 + mm * 5, s = (tag, attrs, text) => svgEl(sec, tag, attrs, text), rail = '#aab3ba', ink = '#16202b';
     s('rect', { x: X(-13), y: 20, width: 130, height: 10, fill: rail });
@@ -845,7 +840,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     for (let i = 0; i < N - 1; i++) {
       planOverlaps[i].setAttribute('x', PX(state.xs[i + 1]));
       planOverlaps[i].setAttribute('width', o[i] * PXS());
-      tags[i].textContent = 'O' + sub(i + 1) + sub(i + 2) + ' ' + (o[i] * 100).toFixed(1);
     }
     planGrip.setAttribute('cx', PX(state.grip.x));
   }
@@ -860,7 +854,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   }
   function pinLabels() {
     $('labels').style.display = view === 'top' ? 'none' : '';
-    for (let i = 0; i < N - 1; i++) pin(tags[i], overlapStrips[i].position.x, 0.5 + i * Math.min(0.36, 1.5 / (N - 1)), FAB_Z(N - 1) + 0.03);
     pin(tagWand, state.grip.x, state.grip.y + 0.28, state.grip.z);
   }
 
@@ -965,3 +958,4 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 </script>
 </body>
 </html>
+
