@@ -136,12 +136,15 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 .ctl { padding: 6px 12px; font-size: 13px; border-color: var(--line); }
 #play { background: var(--ink); color: #fff; border-color: var(--ink); font-weight: 700; min-width: 108px; }
 #play:hover { background: #26333f; }
-#count, #speed { display: flex; gap: 2px; align-items: center; }
-#count { margin-left: auto; font-size: 12px; color: var(--ink-soft); }
-#count span { margin-right: 4px; }
-#speed { margin-left: 6px; }
-#count .ctl, #speed .ctl { padding: 4px 8px; font-family: var(--font-num); font-size: 12px; border-color: transparent; }
-#count .ctl[aria-pressed="true"], #speed .ctl[aria-pressed="true"] { background: var(--ink); color: #fff; }
+.grp, #speed { display: flex; gap: 2px; align-items: center; }
+.grp { font-size: 12px; color: var(--ink-soft); }
+.grp:first-of-type { margin-left: auto; }
+.grp span { margin-right: 4px; }
+.grp b { font-family: var(--font-num); color: var(--ink); min-width: 20px; text-align: center; }
+.grp .ctl:disabled { opacity: 0.3; cursor: default; }
+#speed { margin-left: 0; }
+.grp .ctl, #speed .ctl { padding: 4px 8px; font-family: var(--font-num); font-size: 12px; border-color: transparent; }
+.grp .ctl[aria-pressed="true"], #speed .ctl[aria-pressed="true"] { background: var(--ink); color: #fff; }
 #pct { font-family: var(--font-num); font-size: 13px; font-weight: 700; font-variant-numeric: tabular-nums; min-width: 58px; text-align: right; }
 #section { position: fixed; right: 16px; top: 112px; width: 236px; padding: 10px 12px; }
 #section h2 { margin: 0 0 4px; font-size: 12.5px; font-weight: 700; }
@@ -185,7 +188,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     </div>
     <div class="metric">
       <span class="k">展開跨距</span>
-      <span class="v"><b id="mSpan">126.0</b> / 360 cm</span>
+      <span class="v"><b id="mSpan">126.0</b> / <span id="mTotal">320</span> cm</span>
       <span class="s" id="mRatio">位移比 0:1:2:3:4:5</span>
     </div>
     <div class="metric">
@@ -226,12 +229,21 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   <div id="controls">
     <button type="button" class="ctl" id="play">播放全流程</button>
     <button type="button" class="ctl" id="reset">回到起點</button>
-    <div id="count" role="group" aria-label="片數">
+    <div class="grp" role="group" aria-label="單片寬">
+      <span>片寬 cm</span>
+      <button type="button" class="ctl" data-w="40" aria-pressed="false">40</button>
+      <button type="button" class="ctl" data-w="60" aria-pressed="true">60</button>
+      <button type="button" class="ctl" data-w="80" aria-pressed="false">80</button>
+    </div>
+    <div class="grp" role="group" aria-label="片數">
       <span>片數</span>
-      <button type="button" class="ctl" data-n="3" aria-pressed="false">3</button>
-      <button type="button" class="ctl" data-n="4" aria-pressed="false">4</button>
-      <button type="button" class="ctl" data-n="5" aria-pressed="false">5</button>
-      <button type="button" class="ctl" data-n="6" aria-pressed="true">6</button>
+      <button type="button" class="ctl" id="nMinus" aria-label="減一片">−</button>
+      <b id="nVal">6</b>
+      <button type="button" class="ctl" id="nPlus" aria-label="加一片">＋</button>
+    </div>
+    <div class="grp" role="group" aria-label="場景">
+      <button type="button" class="ctl" data-scene="window" aria-pressed="true">窗牆</button>
+      <button type="button" class="ctl" data-scene="corridor" aria-pressed="false">走道隔間</button>
     </div>
     <div id="speed" role="group" aria-label="播放速度">
       <button type="button" class="ctl" data-speed="0.5" aria-pressed="false">0.5×</button>
@@ -252,14 +264,15 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   if (!window.THREE || !THREE.OrbitControls) { document.getElementById('fail').style.display = 'flex'; return; }
 
   /* ───────── 幾何常數（1 單位 = 1 m） ───────── */
-  let N = 6;                   // 片數（單軌最多 6 片）
-  let W, LEAD_CLOSED, LEAD_OPEN;
+  let N = 6, W = 0.60;         // 片數（單軌 3–10 片）、單片寬（工廠規格 40 / 60 / 80 cm）
+  let X0, X1, LEAD_CLOSED, LEAD_OPEN;
+  let scenery = 'window';      // 'window' 窗牆 ｜ 'corridor' 走道隔間
+  let view = 'overview';
   const O_MIN = 0.08;          // 展開到底時的交疊
   const H = 2.40;              // 片高
   const TRACK_Y = 2.52;        // 頂軌高
   const ZC = -0.44;            // 單軌中心線
   const PITCH = 0.005;         // 相鄰片布面的前後間距（示意假設值）
-  const X0 = -1.80, X1 = 1.80; // 窗洞左右
   const STEP_CLOSED = 0.10;    // 收合時相鄰錯位
   const WHEEL_BACK = 0.05;     // 前導輪距片簾前緣
   const WAND_L = 1.25, GRIP_AT = WAND_L - 0.07;
@@ -267,16 +280,17 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   // 布面則各自偏離軌道中心不同的量（偏心），所以多片可以前後緊貼。
   const FAB_E = i => (i - (N - 1) / 2) * PITCH;
   const FAB_Z = i => ZC + FAB_E(i);
-  const MOVER = ['#c98a12', '#0f8b8d', '#b0428f', '#6a8f1f'];
+  const MOVER = ['#c98a12', '#0f8b8d', '#b0428f', '#6a8f1f', '#d0562b', '#5a55c8', '#8a6d3b', '#1a9c6b'];
   const colorOf = i => i === 0 ? '#5b6770' : i === N - 1 ? '#1f4fd8' : MOVER[(i - 1) % MOVER.length];
-  // 片寬由片數決定：展開到底剛好蓋滿 360 cm 且每處交疊 8 cm
-  function setCount(n) {
-    N = n;
-    W = (X1 - X0 + (N - 1) * O_MIN) / N;
+  // 片寬是固定規格，所以全展開跨距由片數和片寬決定：L = N·W − (N−1)·最小交疊
+  function setSpec(n, w) {
+    N = n; W = w;
+    const L = N * W - (N - 1) * O_MIN;
+    X0 = -L / 2; X1 = L / 2;
     LEAD_CLOSED = X0 + (N - 1) * STEP_CLOSED;
     LEAD_OPEN = X1 - W;
   }
-  setCount(6);
+  setSpec(6, 0.60);
 
   const PHASES = [
     { from: 0.00, to: 0.15, name: '拉拖準備', color: 'var(--p1)', desc: '操作員走到領頭片旁，抬手握住拉棒握把；片簾維持收合。' },
@@ -341,7 +355,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   controls.dampingFactor = 0.08;
   controls.maxPolarAngle = Math.PI / 2 - 0.03;
   controls.minDistance = 0.25;
-  controls.maxDistance = 20;
+  controls.maxDistance = 40;
 
   scene.add(new THREE.HemisphereLight(0xffffff, 0x8c8478, 0.9));
   const sun = new THREE.DirectionalLight(0xfff1dc, 1.5);
@@ -387,41 +401,53 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   }, 4, 10);
 
   /* 房間與落地窗 */
-  const hideInTopView = [];
-  (function buildRoom() {
-    const floor = new THREE.Mesh(new THREE.PlaneGeometry(14, 12),
-      new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.7 }));
-    floor.rotation.x = -Math.PI / 2; floor.position.z = 2.2; floor.receiveShadow = true;
-    scene.add(floor);
-
-    const sky = new THREE.Mesh(new THREE.PlaneGeometry(9, 5), new THREE.MeshBasicMaterial({ color: 0xdff0fb }));
-    sky.position.set(0, 2, -3); scene.add(sky);
-    const hill = new THREE.Mesh(new THREE.PlaneGeometry(9, 1.3), new THREE.MeshBasicMaterial({ color: 0xa9c4b0 }));
-    hill.position.set(0, 0.65, -2.95); scene.add(hill);
-
+  let railCover = null, header = null;
+  function applyTopVisibility() { [railCover, header].forEach(m => { if (m) m.visible = view !== 'top'; }); }
+  const room = new THREE.Group(); scene.add(room);
+  const floorMat = new THREE.MeshStandardMaterial({ map: floorTex, roughness: 0.7 });
+  function buildRoom() {
+    while (room.children.length) { const old = room.children[0]; if (old.geometry) old.geometry.dispose(); room.remove(old); }
+    const L = X1 - X0;
+    const floor = new THREE.Mesh(new THREE.PlaneGeometry(22, 16), floorMat);
+    floor.rotation.x = -Math.PI / 2; floor.position.z = 2.2; floor.receiveShadow = true; room.add(floor);
     const wallMat = new THREE.MeshStandardMaterial({ color: 0xe6e8e6, roughness: 0.9 });
     const box = (w, h, d, x, y, z, mat) => {
       const m = new THREE.Mesh(new THREE.BoxGeometry(w, h, d), mat);
-      m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; scene.add(m); return m;
+      m.position.set(x, y, z); m.castShadow = true; m.receiveShadow = true; room.add(m); return m;
     };
-    box(3.2, 3.2, 0.35, -3.4, 1.6, -0.58, wallMat);
-    box(3.2, 3.2, 0.35, 3.4, 1.6, -0.58, wallMat);
-    hideInTopView.push(box(3.6, 0.65, 0.35, 0, 2.875, -0.58, wallMat));
-
-    const frameMat = new THREE.MeshStandardMaterial({ color: 0x3b4650, metalness: 0.6, roughness: 0.35 });
-    [-1.775, -0.6, 0.6, 1.775].forEach(x => box(0.05, 2.55, 0.07, x, 1.275, -0.66, frameMat));
-    box(3.6, 0.04, 0.12, 0, 0.02, -0.66, frameMat);
-    const glass = new THREE.Mesh(new THREE.PlaneGeometry(3.6, 2.55),
-      new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.12, roughness: 0.05 }));
-    glass.position.set(0, 1.275, -0.66); scene.add(glass);
-
-    // 地面刻度：每 30 cm 一格，對照 360 cm 窗寬
-    const tickMat = new THREE.MeshBasicMaterial({ color: 0x4a3a28 });
-    for (let cm = 0; cm <= 360; cm += 30) {
-      const t = new THREE.Mesh(new THREE.PlaneGeometry(0.01, cm % 90 === 0 ? 0.12 : 0.06), tickMat);
-      t.rotation.x = -Math.PI / 2; t.position.set(X0 + cm / 100, 0.003, -0.2); scene.add(t);
+    if (scenery === 'window') {
+      // 窗牆：片簾裝在落地窗的窗楣下
+      const sky = new THREE.Mesh(new THREE.PlaneGeometry(L + 6, 5), new THREE.MeshBasicMaterial({ color: 0xdff0fb }));
+      sky.position.set(0, 2, -3); room.add(sky);
+      const hill = new THREE.Mesh(new THREE.PlaneGeometry(L + 6, 1.3), new THREE.MeshBasicMaterial({ color: 0xa9c4b0 }));
+      hill.position.set(0, 0.65, -2.95); room.add(hill);
+      box(3.2, 3.2, 0.35, -(L / 2 + 1.6), 1.6, -0.58, wallMat);
+      box(3.2, 3.2, 0.35, L / 2 + 1.6, 1.6, -0.58, wallMat);
+      header = box(L, 0.65, 0.35, 0, 2.875, -0.58, wallMat);
+      const frameMat = new THREE.MeshStandardMaterial({ color: 0x3b4650, metalness: 0.6, roughness: 0.35 });
+      const bays = Math.max(1, Math.round(L / 1.2));
+      for (let k = 0; k <= bays; k++) box(0.05, 2.55, 0.07, clamp(X0 + k * L / bays, X0 + 0.025, X1 - 0.025), 1.275, -0.66, frameMat);
+      box(L, 0.04, 0.12, 0, 0.02, -0.66, frameMat);
+      const glass = new THREE.Mesh(new THREE.PlaneGeometry(L, 2.55),
+        new THREE.MeshStandardMaterial({ color: 0xffffff, transparent: true, opacity: 0.12, roughness: 0.05 }));
+      glass.position.set(0, 1.275, -0.66); room.add(glass);
+    } else {
+      // 走道隔間：頂軌橫跨走道，兩側是走道牆，上方只有一道吊樑，片簾前後都是通道
+      box(0.2, 3.2, 10, -(L / 2 + 0.1), 1.6, -0.2, wallMat);
+      box(0.2, 3.2, 10, L / 2 + 0.1, 1.6, -0.2, wallMat);
+      header = box(L, 0.65, 0.2, 0, 2.875, ZC, wallMat);
+      const endWall = new THREE.Mesh(new THREE.PlaneGeometry(L + 0.4, 3.2), new THREE.MeshBasicMaterial({ color: 0xc3ccd1 }));
+      endWall.position.set(0, 1.6, -5.2); room.add(endWall);
     }
-  })();
+    // 地面刻度：每 30 cm 一格
+    const tickMat = new THREE.MeshBasicMaterial({ color: 0x4a3a28 });
+    for (let cm = 0; cm <= L * 100 + 0.5; cm += 30) {
+      const t = new THREE.Mesh(new THREE.PlaneGeometry(0.01, cm % 90 === 0 ? 0.12 : 0.06), tickMat);
+      t.rotation.x = -Math.PI / 2; t.position.set(X0 + cm / 100, 0.003, -0.2); room.add(t);
+    }
+    const half = L / 2 + 2;
+    sun.shadow.camera.left = -half; sun.shadow.camera.right = half; sun.shadow.camera.updateProjectionMatrix();
+  }
 
   /* 頂軌、片簾、拉棒 */
   const panels = [];       // 每片的 Group，position.x = 左緣
@@ -434,20 +460,6 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
 
   const blinds = new THREE.Group(); scene.add(blinds);
   (function buildRailAndWand() {
-    const L = X1 - X0, yBot = TRACK_Y - 0.015, yTop = TRACK_Y + 0.015;
-    const railMat = new THREE.MeshStandardMaterial({ color: 0xf2f3f1, metalness: 0.15, roughness: 0.45 });
-    const lipMat = new THREE.MeshStandardMaterial({ color: 0x59646d, metalness: 0.3, roughness: 0.5 });
-    const rbox = (h, d, y, z, mat) => {
-      const m = new THREE.Mesh(new THREE.BoxGeometry(L, h, d), mat || railMat);
-      m.position.set(0, y, ZC + z); m.castShadow = true; scene.add(m); return m;
-    };
-    hideInTopView.push(rbox(0.003, 0.027, yTop - 0.0015, 0));             // 上蓋（俯視時掀開）
-    [-0.012, 0.012].forEach(z => rbox(0.03, 0.003, TRACK_Y, z));         // 單軌兩側壁
-    [-0.007, 0.007].forEach(z => rbox(0.002, 0.007, yBot + 0.001, z, lipMat));  // 承軌唇
-    const stop = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.02, 0.02),
-      new THREE.MeshStandardMaterial({ color: 0x7a3fc4, roughness: 0.4 }));
-    stop.position.set(X1 - 0.006, TRACK_Y, ZC); scene.add(stop);
-
     // 拉棒：原點在掛點，桿身沿 −Y
     const rod = new THREE.Mesh(new THREE.CylinderGeometry(0.007, 0.007, WAND_L, 12),
       new THREE.MeshStandardMaterial({ color: 0xf4f6f8, metalness: 0.3, roughness: 0.25 }));
@@ -469,6 +481,19 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
       blinds.remove(old);
     }
     panels.length = 0; fabrics.length = 0; overlapStrips.length = 0;
+    const L = X1 - X0, yBot = TRACK_Y - 0.015, yTop = TRACK_Y + 0.015;
+    const railMat = new THREE.MeshStandardMaterial({ color: 0xf2f3f1, metalness: 0.15, roughness: 0.45 });
+    const lipMat = new THREE.MeshStandardMaterial({ color: 0x59646d, metalness: 0.3, roughness: 0.5 });
+    const rbox = (h, d, y, z, mat) => {
+      const m = new THREE.Mesh(new THREE.BoxGeometry(L, h, d), mat || railMat);
+      m.position.set(0, y, ZC + z); m.castShadow = true; blinds.add(m); return m;
+    };
+    railCover = rbox(0.003, 0.027, yTop - 0.0015, 0);                    // 上蓋（俯視時掀開）
+    [-0.012, 0.012].forEach(z => rbox(0.03, 0.003, TRACK_Y, z));         // 單軌兩側壁
+    [-0.007, 0.007].forEach(z => rbox(0.002, 0.007, yBot + 0.001, z, lipMat));  // 承軌唇
+    const stop = new THREE.Mesh(new THREE.BoxGeometry(0.012, 0.02, 0.02),
+      new THREE.MeshStandardMaterial({ color: 0x7a3fc4, roughness: 0.4 }));
+    stop.position.set(X1 - 0.006, TRACK_Y, ZC); blinds.add(stop);
     const hemMat = new THREE.MeshBasicMaterial({ color: 0xb9b2a4 });
     for (let i = 0; i < N; i++) {
       const g = new THREE.Group();
@@ -512,13 +537,14 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
       strip.position.set(0, PANEL_TOP - H / 2, FAB_Z(i + 1) + 0.0012);
       strip.renderOrder = 2; blinds.add(strip); overlapStrips.push(strip);
     }
-    applyXray();
+    applyXray(); applyTopVisibility();
   }
   function applyXray() {
     fabrics.forEach(f => { f.material.transparent = xray; f.material.opacity = xray ? 0.4 : 1; f.material.depthWrite = !xray; f.material.needsUpdate = true; });
     overlapStrips.forEach(st => { st.material.color.setHex(xray ? OK : 0x3a3020); st.material.opacity = xray ? 0.5 : 0.12; st.material.depthTest = !xray; });
   }
   let xray = false;
+  buildRoom();
   buildPanels();
 
   /* ───────── 操作員：關節點 + 兩段式 IK，手掌精確落在握把上 ───────── */
@@ -706,8 +732,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     if (text != null) e.textContent = text;
     parent.appendChild(e); return e;
   };
-  const SUBS = '₀₁₂₃₄₅₆₇₈₉';
-  const PX = x => 20 + (x - X0) * 200, LANE = i => 6 + i * (36 / (N - 1)), TRACK_LANE = 26;
+  const SUBS = '₀₁₂₃₄₅₆₇₈₉', sub = n => String(n).split('').map(d => SUBS[d]).join('');
+  const PXS = () => 720 / (X1 - X0), PX = x => 20 + (x - X0) * PXS(), LANE = i => 6 + i * (36 / (N - 1)), TRACK_LANE = 26;
   let planOverlaps = [], planPanels = [], planWheels = [], planShoes = [], planGrip = null, tags = [];
 
   function buildHud() {
@@ -718,7 +744,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     for (let i = 0; i < N - 1; i++) planOverlaps.push(el('rect', { y: LANE(i), height: LANE(i + 1) + 4 - LANE(i), fill: '#12824f', opacity: 0.25 }));
     el('line', { x1: 20, x2: 740, y1: TRACK_LANE, y2: TRACK_LANE, stroke: '#16202b', 'stroke-width': 1, 'stroke-dasharray': '5 3' });
     el('text', { x: 744, y: TRACK_LANE + 3 }, '軌');
-    for (let i = 0; i < N; i++) planPanels.push(el('rect', { y: LANE(i), height: 4, width: W * 200, rx: 1, fill: colorOf(i) }));
+    for (let i = 0; i < N; i++) planPanels.push(el('rect', { y: LANE(i), height: 4, width: W * PXS(), rx: 1, fill: colorOf(i) }));
     for (let i = 0; i < N; i++) {
       planShoes.push(i > 0 ? el('rect', { y: LANE(i) - 1, width: 4, height: 6, fill: colorOf(i - 1), stroke: '#fff', 'stroke-width': 0.6 }) : null);
       planWheels.push(i > 0 ? {
@@ -728,11 +754,14 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     }
     planGrip = el('circle', { r: 3.5, cy: 48, fill: '#fff', stroke: '#1f4fd8', 'stroke-width': 2 });
     el('line', { x1: 20, x2: 740, y1: 54, y2: 54, stroke: '#55636f', 'stroke-width': 1 });
-    for (let cm = 0; cm <= 360; cm += 30) {
-      el('line', { x1: 20 + cm * 2, x2: 20 + cm * 2, y1: 54, y2: cm % 90 ? 51 : 48, stroke: '#55636f', 'stroke-width': 1 });
-      if (cm % 90 === 0) el('text', { x: 20 + cm * 2, y: 64, 'text-anchor': cm === 0 ? 'start' : cm === 360 ? 'end' : 'middle' }, cm + ' cm');
+    const Lcm = (X1 - X0) * 100, every = Lcm > 420 ? 180 : 90;
+    for (let cm = 0; cm <= Lcm + 0.5; cm += 30) {
+      const x = 20 + cm / 100 * PXS();
+      el('line', { x1: x, x2: x, y1: 54, y2: cm % every ? 51 : 48, stroke: '#55636f', 'stroke-width': 1 });
+      if (cm % every === 0) el('text', { x: x, y: 64, 'text-anchor': cm === 0 ? 'start' : x > 700 ? 'end' : 'middle' }, cm + ' cm');
     }
-    el('text', { x: 4, y: 12 }, '窗'); el('text', { x: 4, y: 45 }, '內');
+    const sides = scenery === 'window' ? ['窗', '內', '窗側', '室內側'] : ['背', '前', '背面側', '操作側'];
+    el('text', { x: 4, y: 12 }, sides[0]); el('text', { x: 4, y: 45 }, sides[1]);
 
     for (let i = 0; i < N - 1; i++) {
       const t = document.createElement('div'); t.className = 'tag';
@@ -747,7 +776,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     [-7, 7].forEach(mm => s('rect', { x: X(mm) - 12.5, y: 100, width: 25, height: 60, rx: 5, fill: ink }));
     s('line', { x1: X(-7), x2: X(7), y1: 130, y2: 130, stroke: ink, 'stroke-width': 4 });
     s('line', { x1: 150, x2: 150, y1: 130, y2: 186, stroke: ink, 'stroke-width': 4 });
-    s('text', { x: 2, y: 15 }, '窗側'); s('text', { x: 298, y: 15, 'text-anchor': 'end' }, '室內側');
+    s('text', { x: 2, y: 15 }, sides[2]); s('text', { x: 298, y: 15, 'text-anchor': 'end' }, sides[3]);
     s('text', { x: 298, y: 128, 'text-anchor': 'end' }, '前導輪');
     s('text', { x: 298, y: 146, 'text-anchor': 'end' }, '各片同位');
     const order = []; for (let i = 0; i < N; i++) order.push(i);
@@ -772,8 +801,12 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     const ratio = []; for (let i = 0; i < N; i++) ratio.push(i);
     $('mEq').textContent = (N - 1) + ' 處交疊相等';
     $('mRatio').textContent = '位移比 ' + ratio.join(':');
-    $('brandSub').textContent = '單軌 ' + N + ' 片 · 偏心前導輪 · 單片 ' + (W * 100).toFixed(1) + ' cm · 窗寬 360 cm';
-    document.querySelectorAll('#count .ctl').forEach(b => b.setAttribute('aria-pressed', +b.dataset.n === N ? 'true' : 'false'));
+    $('brandSub').textContent = '單軌 ' + N + ' 片 · 單片 ' + (W * 100).toFixed(0) + ' cm · 全展開 ' + Lcm.toFixed(0) + ' cm · ' + (scenery === 'window' ? '窗牆' : '走道隔間');
+    $('mTotal').textContent = Lcm.toFixed(0);
+    $('nVal').textContent = N;
+    $('nMinus').disabled = N <= 3; $('nPlus').disabled = N >= 10;
+    document.querySelectorAll('[data-w]').forEach(b => b.setAttribute('aria-pressed', Math.abs(b.dataset.w / 100 - W) < 1e-6 ? 'true' : 'false'));
+    document.querySelectorAll('[data-scene]').forEach(b => b.setAttribute('aria-pressed', b.dataset.scene === scenery ? 'true' : 'false'));
   }
   buildHud();
 
@@ -811,8 +844,8 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     }
     for (let i = 0; i < N - 1; i++) {
       planOverlaps[i].setAttribute('x', PX(state.xs[i + 1]));
-      planOverlaps[i].setAttribute('width', o[i] * 200);
-      tags[i].textContent = 'O' + SUBS[i + 1] + SUBS[i + 2] + ' ' + (o[i] * 100).toFixed(1);
+      planOverlaps[i].setAttribute('width', o[i] * PXS());
+      tags[i].textContent = 'O' + sub(i + 1) + sub(i + 2) + ' ' + (o[i] * 100).toFixed(1);
     }
     planGrip.setAttribute('cx', PX(state.grip.x));
   }
@@ -852,7 +885,7 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
   });
 
   /* ───────── 視角 ───────── */
-  let view = 'overview', moving = false;
+  let moving = false;
   const camGoal = new THREE.Vector3(), tgtGoal = new THREE.Vector3(), lastAnchor = new THREE.Vector3(), anchor = new THREE.Vector3();
   // 跟拍的參考點：拉棒握把，或俯視時領頭片前導輪稍後方（收合時各片導輪在此依序排列）
   function readAnchor() {
@@ -860,14 +893,14 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     if (view === 'top') { anchor.set(state.xs[N - 1] + W - 0.2, TRACK_Y, ZC); return true; }
     return false;
   }
-  function overviewDistance() { return Math.max(5.6, 2.35 / (Math.tan(THREE.MathUtils.degToRad(20)) * camera.aspect)); }
+  function overviewDistance() { return Math.max(5.6, ((X1 - X0) / 2 + 0.55) / (Math.tan(THREE.MathUtils.degToRad(20)) * camera.aspect)); }
   function setView(name, instant) {
     view = name;
-    if (name === 'overview') { camGoal.set(0.5, 1.75, overviewDistance()); tgtGoal.set(0, 1.0, -0.2); }
+    if (name === 'overview') { camGoal.set(Math.min(0.5, (X1 - X0) * 0.12), 1.75, overviewDistance()); tgtGoal.set(0, 1.0, -0.2); }
     if (name === 'top') { readAnchor(); tgtGoal.copy(anchor); camGoal.copy(anchor).add(tA.set(0, Math.max(0.36, 0.15 / (Math.tan(THREE.MathUtils.degToRad(20)) * camera.aspect)), 0.06)); }
     if (name === 'wand') { camGoal.copy(state.grip).add(tA.set(0.95, 0.3, 1.9)); tgtGoal.copy(state.grip).add(tA.set(-0.2, 0.05, 0)); }
     if (readAnchor()) lastAnchor.copy(anchor);
-    hideInTopView.forEach(m => { m.visible = name !== 'top'; });
+    applyTopVisibility();
     moving = !instant;
     if (instant) { camera.position.copy(camGoal); controls.target.copy(tgtGoal); }
     [['vOverview', 'overview'], ['vTop', 'top'], ['vWand', 'wand']].forEach(([id, n]) => $(id).setAttribute('aria-pressed', n === name ? 'true' : 'false'));
@@ -881,9 +914,15 @@ button:focus-visible, input:focus-visible { outline: 2px solid var(--accent); ou
     $('vXray').setAttribute('aria-pressed', xray ? 'true' : 'false');
     applyXray();
   });
-  document.querySelectorAll('#count .ctl').forEach(b => b.addEventListener('click', () => {
-    setCount(+b.dataset.n); buildPanels(); buildHud(); update(state.t);
-  }));
+  function respec(n, w, sc) {
+    scenery = sc; setSpec(clamp(n, 3, 10), w);
+    buildRoom(); buildPanels(); buildHud(); update(state.t);
+    if (view === 'overview') setView('overview');
+  }
+  $('nMinus').addEventListener('click', () => respec(N - 1, W, scenery));
+  $('nPlus').addEventListener('click', () => respec(N + 1, W, scenery));
+  document.querySelectorAll('[data-w]').forEach(b => b.addEventListener('click', () => respec(N, b.dataset.w / 100, scenery)));
+  document.querySelectorAll('[data-scene]').forEach(b => b.addEventListener('click', () => respec(N, W, b.dataset.scene)));
 
   function resize() {
     const w = window.innerWidth, h = window.innerHeight;
